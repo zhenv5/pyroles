@@ -7,7 +7,7 @@ import nimfa
 import mdl
 from progressbar import ProgressBar
 import time 
-
+import cvxpy as cvx 
 
 def min_max_scaler(target_list):
     min_target_list = min(target_list)
@@ -16,6 +16,78 @@ def min_max_scaler(target_list):
     result = [(item -min_target_list)/(max_target_list - min_target_list) for item in target_list]
 
     return result 
+
+def nmf(feature_matrix,W,H,rank,max_iter = 1000,sparsity = False, diversity = False):
+    '''
+    non-negative matrix factorization
+
+    feature_matrix = W * H 
+
+    sparsity: sparsity constraint 
+    
+    diversity: diversity constraint 
+
+    '''
+    
+    m,n = feature_matrix.shape
+
+    # sparsity threshold is num_nodes / num_roles
+    sparsity_threshold = 2*float(n)*float(m) / float(rank)
+
+    diversity_threshold = 0.8
+
+    pbar = ProgressBar()
+
+    best_W = np.copy(W)
+    best_H = np.copy(H)
+
+    residual = []
+
+    for iter_num in pbar(xrange(1,1 + max_iter)):
+        # for odd iterations, treat W as constant, optimize over H
+        if iter_num % 2 == 1:
+            H = cvx.Variable(rank,n)
+            constraint = [H >= 0]
+            if sparsity:
+                constraint += [cvx.sum_entries(H) <= sparsity_threshold]
+            if diversity:
+                for i in xrange(rank):
+                    for j in xrange(i+1,rank):
+                        constraint += [H[i,:]*best_H[j,:].T/(cvx.sum_squares(best_H[j,:])) <= diversity_threshold]
+        else:
+            # for even iterations, treat H as constant, optimize over W 
+            W = cvx.Variable(m,rank)
+            constraint = [W >= 0]
+            if sparsity:
+                constraint += [cvx.sum_entries(W) <= sparsity_threshold]
+            if diversity:
+                for i in xrange(rank):
+                    for j in xrange(i+1,rank):
+                        constraint += [W[:,i].T*best_W[:,j]/cvx.sum_squares(best_W[:,j]) <= diversity_threshold]
+
+        # solve the problem
+        obj = cvx.Minimize(cvx.norm(feature_matrix - W*H,"fro"))
+        prob = cvx.Problem(obj,constraint)
+        prob.solve(solver = cvx.SCS)
+
+        print 'Iteration {}, residual norm {}'.format(iter_num, prob.value)
+        residual.append(prob.value)
+
+        if iter_num % 2 == 1:
+            H = H.value
+            best_H = H
+        else:
+            W = W.value
+            best_W = W
+
+        if prob.status == cvx.OPTIMAL:
+            break
+    if prob.status != cvx.OPTIMAL:
+        raise Exception("Solver did not converge!")
+    else:
+        return (best_W,best_H)
+
+
 
 def vanilla_mf(feature_matrix,rank,max_iter = 1000):
     
@@ -39,7 +111,7 @@ def vanilla_mf(feature_matrix,rank,max_iter = 1000):
 
     return (W,H)
 
-def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outputs/roleFeatures.txt"):
+def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outputs/roleFeatures.txt",sparsity = False, diversity = False):
 
     '''
     input: 
@@ -75,18 +147,22 @@ def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outpu
     for rank in pbar(xrange(1,max_roles + 1)):
 
         W,H = vanilla_mf(actual_fx_matrix,rank=rank,max_iter=1000)
+
+        W,H = nmf(actual_fx_matrix,W,H,rank,sparsity = sparsity,diversity = diversity)
+
+
         estimated_matrix = np.asarray(np.dot(W, H))
         code_length_W = mdlo.get_huffman_code_length(W)
         code_length_H = mdlo.get_huffman_code_length(H)
 
-        print str(W.shape[0]) + " " + str(W.shape[1]) +  " " + str(H.shape[0]) +  " "  + str(H.shape[1])
+        #print str(W.shape[0]) + " " + str(W.shape[1]) +  " " + str(H.shape[0]) +  " "  + str(H.shape[1])
 
         model_cost = code_length_W * (W.shape[1]) + code_length_H * (H.shape[0])
         #model_cost = code_length_W * (W.shape[0] + W.shape[1]) + code_length_H * (H.shape[0] + H.shape[1])
         loglikelihood = mdlo.get_log_likelihood(actual_fx_matrix, estimated_matrix)
 
-        print("model_cost: %5.4f" % model_cost)
-        print "loglikelihood: %5.4f" % loglikelihood)
+        #print("model_cost: %5.4f" % model_cost)
+        #print("loglikelihood: %5.4f" % loglikelihood)
 
         model_cost_list.append(model_cost)
         loglikelihood_list.append(-loglikelihood)
@@ -101,21 +177,31 @@ def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outpu
     best_k = np.argmin(description_length_list) + 1
 
     best_W,best_H = vanilla_mf(actual_fx_matrix,rank = best_k, max_iter = 1000)
+    best_W,best_H = nmf(actual_fx_matrix,best_W,best_H,best_k, max_iter = 1000,sparsity = sparsity,diversity = diversity)
 
     np.savetxt(save_W_file, X=best_W)
     np.savetxt(save_H_file, X=best_H)
-    
+    return (best_W,best_H)
 
 
 
 if __name__ == "__main__":
+
 	
+    np.random.seed(0)
+    m = 1000
+    n = 37
+    k = 7
 
-	feature_matrix = np.random.rand(4096,32)
-
-	print feature_matrix.shape
-
-	mf(feature_matrix)
+    feature_matrix = np.random.rand(m,k).dot(np.random.rand(k,n))
+    best_W,best_H = mf(feature_matrix,sparsity = False,diversity = True)
+	#feature_matrix = np.random.rand(1248,45)
+	#print feature_matrix.shape
+	#mf(feature_matrix)
+    #print feature_matrix
+    #print best_W.dot(best_H)
+    #print sum(best_W)
+    #print sum(best_H)
 
 
 
