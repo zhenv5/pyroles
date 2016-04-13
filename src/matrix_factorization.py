@@ -1,6 +1,3 @@
-#from collections import defaultdict, Counter
-#import urllib
-
 import numpy as np
 import pandas as pd 
 import nimfa
@@ -111,7 +108,7 @@ def vanilla_mf(feature_matrix,rank,max_iter = 1000):
 
     return (W,H)
 
-def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outputs/roleFeatures.txt",sparsity = False, diversity = False):
+def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outputs/roleFeatures.txt",sparsity = False, diversity = False,max_rank = 30):
 
     '''
     input: 
@@ -131,6 +128,7 @@ def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outpu
 
     number_bins = int(np.log2(n))
     max_roles = min([n, f])
+    max_rank = min(max_roles,max_rank)
     best_W = None
     best_H = None
 
@@ -144,7 +142,7 @@ def mf(feature_matrix,save_W_file = "outputs/nodeRoles.txt",save_H_file = "outpu
 
     # ProgressBar: Text progress bar library for Python
     pbar = ProgressBar()
-    for rank in pbar(xrange(1,max_roles + 1)):
+    for rank in pbar(xrange(1,(max_roles + 1)/2)):
 
         W,H = vanilla_mf(actual_fx_matrix,rank=rank,max_iter=1000)
 
@@ -189,12 +187,12 @@ if __name__ == "__main__":
 
 	
     np.random.seed(0)
-    m = 1000
-    n = 37
-    k = 7
+    m = 10000
+    n = 1500
+    k = 10
 
     feature_matrix = np.random.rand(m,k).dot(np.random.rand(k,n))
-    best_W,best_H = mf(feature_matrix,sparsity = False,diversity = True)
+    best_W,best_H = mf(feature_matrix,sparsity = False,diversity = False,max_rank = 30)
 	#feature_matrix = np.random.rand(1248,45)
 	#print feature_matrix.shape
 	#mf(feature_matrix)
